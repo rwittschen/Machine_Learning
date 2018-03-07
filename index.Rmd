@@ -1,0 +1,145 @@
+---
+title: "Machine Learning Project"
+author: "Lee Wittschen"
+date: "March 2, 2018"
+geometry: margin=2cm
+output: 
+  html_document:
+    keep_md: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+```
+# Introduction
+
+The purpose of this analysis is to use data from personal activity measurement devices (i.e. Fitbit, Nike FuelBand, etc.) on 6 participants to model and predict correct and incorrect barbell lifts. The lifts were completed in 5 different ways and the data comes from: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+# Data Exploration & Processing
+
+The data for this analysis is split into training and testing data sets. Given that we want to compute out-of-sample errors, we will split the training set into training and testing sets while using the testing data set for final model validation. We load the data as follows:
+```{r Data Load}
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", header=TRUE)
+dim(training)
+validation <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", header=TRUE)
+dim(validation)
+```
+The data sets have a consistent structure, as expected, and we complete initial data exploration on the larger data set, training.
+A review of the data set structure shows that some data attributes contain a large number of NA values and some columns contain activity metdata (i.e., user name). We will need to address these attributes prior to building the model.
+```{r data structure, echo=FALSE, results="hide"}
+library(caret)
+library(rpart)
+library(randomForest)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+```
+
+## Data Cleanse
+
+We see that some columns are metadata (i.e. user name) which are not predictive and that some attributes contain a lot of NA values, which we want to remove from the data sets. We also want to remove any attributes that have one or very few unique values relative to the number of sample. These attributes have near zero variance and will also be removed from the data sets as they should not be strong predictors. This is done as follows:
+``` {r data clean up}
+set.seed(4567)
+# Identify low variance predictors using the NearZeroVar function
+lo_var <- nearZeroVar(training)
+# Remove these predictors from the data sets
+training <- training[, -lo_var]
+validation <- validation[, -lo_var]
+# Identify predictors with a avg number of NA values greater than 95%
+NAs <- sapply(training, function(x) mean(is.na(x))) >0.99
+# Remove these predictors from the data sets
+training <- training[, NAs==FALSE]
+validation <- validation[, NAs==FALSE]
+# Remove the metadata attributes
+training <- training[, -(1:6)]
+validation <- validation[, -(1:6)]
+dim(training)
+dim(validation)
+```
+
+## Data Partition
+
+As mentioned previously, we split the training data set into training (65%) and testing (35%) to compute out-of-sample error. This allows us to train on one data set and apply it to the training set to get the model accuracy on a new data set. We partition the data as follows:
+``` {r partition}
+train_split <- createDataPartition(y=training$classe, p=0.65, list=FALSE)
+training <- training[train_split, ]
+testing <- training[-train_split, ]
+```
+Now that we have our training, testing and validation data sets and can begin modeling.
+
+# Machine Learning Algorithms
+
+We will build three models using the training data; decision tree, random forest and gradient boosting method. The decision tree model will be used since it can handle both linear and non-linear relationships. The random forest provides reduced variance over decision trees. The gradient boosting method within the caret package shall be used as it should provide improved accuracy over decision trees.
+
+## Decision Tree Model
+
+We run the decision tree model as follows:
+``` {r decision tree}
+model_DT <- train(classe ~., data=training, method="rpart", trControl=trainControl(method="cv", number=3))
+# Use the trainControl function to select the cross-validation resampling method and to set the number of folds in the K-fold cross-validation
+```
+
+Next, we evalute the decision tree model on the test data:
+``` {r decision tree evaluation}
+# Predict results using the testing data set
+predictions_DT <- predict(model_DT, testing)
+# Check confusion matrix
+cm_DT <- confusionMatrix(predictions_DT, testing$classe)
+cm_DT
+```
+
+## Random Forest
+
+We run the random forest model as follows:
+``` {r random forest}
+# Create the model
+model_RF <- train(classe~., data=training, method="rf", trControl=trainControl(method="cv", number=3))
+# Use the trainControl function to select the cross-validation resampling method and to set the number of folds in the K-fold cross-validation
+```
+Next, we evaluate the radom forest moddel on the test data:
+``` {r random forest evaluation}
+# Predict the results using the testing data set
+predictions_RF <- predict(model_RF, testing)
+# Check confusion matrix
+cm_RF <- confusionMatrix(predictions_RF, testing$classe)
+cm_RF
+```
+
+## Gradient Boosting
+
+Finally, we run the gradient boosting model:
+``` {r gradient boost}
+model_GB <- train(classe~., data=training, method="gbm", trControl=trainControl(method="cv", number=3), verbose=FALSE)
+# Use the trainControl function to select the cross-validation resampling method and to set the number of folds in the K-fold cross-validation
+```
+Next, we evaluate the gradient boosting model:
+``` {r gradient boost evaluation}
+# Predict the results using the testing data set
+predictions_GB <- predict(model_GB, testing)
+# Check confusion matrix
+cm_GB <- confusionMatrix(predictions_GB, testing$classe)
+cm_GB
+```
+
+## Model Evaluation
+
+Looking at the three models, we see the following for accuracy and out-of-sample error:
+``` {r results, echo=FALSE}
+results <- data.frame(
+  Model=c("Decision Tree", "Random Forest", "Gradient Boost"),
+  Accuracy=rbind(cm_DT$overall[1],cm_RF$overall[1],cm_GB$overall[1]), Error=rbind(1-cm_DT$overall[1],1-cm_RF$overall[1],1-cm_GB$overall[1]))
+results
+```
+The results show that the Random Forest model provides the best accuracy at 100%, with Gradient Boosting providing 98% accuracy and Decision Trees providing a rather poor 49% accuracy. 
+
+Let's look at Random Forest model:
+``` {r model}
+model_RF$finalModel
+# Look at the importance of the predictors
+varImp(model_RF)
+```
+
+# Conclusion
+
+The 100% accuracy of the Random Forest model is somewhat troubling. Perhaps the data cleansing removed variables that would impact the decision tree and random forest models. The decision to remove the low variance variables and predominantly NA variables seems prudent, but this may have resulted in a very high accuracy for the random forest model.
